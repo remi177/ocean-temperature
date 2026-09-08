@@ -1,0 +1,652 @@
+<!doctype html>
+<html lang="fr">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <title>Ocean SST</title>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        body {
+            margin: 0;
+            background: #f2f4f7;
+            font-family: Arial, Helvetica, sans-serif;
+            color: #222;
+        }
+
+        .page {
+            max-width: 1400px;
+            margin: 30px auto;
+            padding: 0 20px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 4px 18px rgba(0,0,0,0.10);
+        }
+
+        h1 {
+            text-align: center;
+            margin: 0 0 6px 0;
+            font-size: 28px;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 22px;
+        }
+
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+            margin: 0 0 18px 0;
+            flex-wrap: wrap;
+        }
+
+        .range-btn {
+            border: 1px solid #bbb;
+            background: #f5f6f8;
+            padding: 7px 15px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        .range-btn:hover {
+            background: #e7e9ed;
+        }
+
+        .range-btn.active,
+        .view-btn.active {
+            background: #333;
+            color: white;
+            border-color: #333;
+        }
+
+        .view-btn {
+            border: 1px solid #bbb;
+            background: #f5f6f8;
+            padding: 7px 15px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        .view-btn:hover {
+            background: #e7e9ed;
+        }
+
+        .chart-box {
+            position: relative;
+            height: 600px;
+        }
+
+        .infos {
+            margin-top: 18px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            justify-content: center;
+            font-size: 15px;
+        }
+
+        .info {
+            background: #f5f6f8;
+            padding: 9px 14px;
+            border-radius: 7px;
+        }
+
+        .source {
+            text-align: center;
+            margin-top: 14px;
+            font-size: 12px;
+            color: #888;
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="page">
+
+    <div class="card">
+
+        <h1>Température moyenne de la surface des océans</h1>
+
+        <div class="subtitle" id="periodTitle">
+            365 derniers jours
+        </div>
+
+        <div class="controls">
+            <button class="range-btn" data-range="1m"
+                    onclick="loadSST('1m', this)">1 mois</button>
+
+            <button class="range-btn active" data-range="1y"
+                    onclick="loadSST('1y', this)">1 an</button>
+
+            <button class="range-btn" data-range="3y"
+                    onclick="loadSST('3y', this)">3 ans</button>
+
+            <button class="range-btn" data-range="10y"
+                    onclick="loadSST('10y', this)">10 ans</button>
+
+            <button class="range-btn" data-range="all"
+                    onclick="loadSST('all', this)">Tout</button>
+        </div>
+
+        <div class="controls">
+            <button class="view-btn active"
+                    data-view="temp"
+                    onclick="setView('temp')">
+                Température
+            </button>
+
+            <button class="view-btn"
+                    data-view="anomaly"
+                    onclick="setView('anomaly')">
+                Anomalie 1991–2020
+            </button>
+        </div>
+
+        <div class="chart-box">
+            <canvas id="sstChart"></canvas>
+        </div>
+
+        <div class="infos">
+            <div class="info">
+                Dernière donnée :
+                <strong id="lastDate">...</strong>
+            </div>
+
+            <div class="info">
+                Température :
+                <strong id="lastTemp">...</strong>
+            </div>
+
+            <div class="info">
+                Moyenne 365 j :
+                <strong id="lastMoy">...</strong>
+            </div>
+        </div>
+
+        <div class="source">
+            Source : Climate Reanalyzer / NOAA OISST v2.1<br>
+            Dernière récupération :
+            <span id="updatedAt">...</span>
+        </div>
+
+    </div>
+
+</div>
+
+
+<script>
+
+let sstChart = null;
+let currentRange = '1y';
+let currentView = 'temp';
+
+function setView(view) {
+    currentView = view;
+
+    document.querySelectorAll('.view-btn').forEach(b => {
+        b.classList.toggle(
+            'active',
+            b.dataset.view === view
+        );
+    });
+
+    loadSST(currentRange);
+}
+
+async function loadSST(range = '1y', button = null) {
+
+    currentRange = range;
+
+    document.querySelectorAll('.range-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.range === range);
+    });
+
+    const titles = {
+        '1m': '30 derniers jours',
+        '1y': '365 derniers jours',
+        '3y': '3 dernières années',
+        '10y': '10 dernières années',
+        'all': 'Historique complet'
+    };
+
+    document.getElementById('periodTitle').textContent =
+        (
+            currentView === 'temp'
+            ? ''
+            : 'Anomalie vs 1991–2020 — '
+        )
+        +
+        (titles[range] || '');
+
+    const response = await fetch(
+        'sst_processed.json?t=' + Date.now()
+    );
+
+    const json = await response.json();
+
+    const ranges = {
+        '1m': 30,
+        '1y': 365,
+        '3y': 365 * 3,
+        '10y': 365 * 10,
+        'all': null
+    };
+
+    const count = ranges[range];
+
+    const rows =
+        count === null
+        ? json.data
+        : json.data.slice(-count);
+
+    const labels = rows.map(r => {
+        const d = new Date(r.date + 'T00:00:00');
+
+        return d.toLocaleDateString(
+            'fr-FR',
+            {
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric'
+            }
+        );
+    });
+
+
+    const temperatures = rows.map(r => r.temp);
+    const moy90 = rows.map(r => r.moy90);
+    const moy365 = rows.map(r => r.moy365);
+
+    const anomalies = rows.map(r => r.anomaly);
+    const anomaly90 = rows.map(r => r.anomaly90);
+
+    const maxTemp = rows.map(r => r.max_temp);
+    const maxMoy = rows.map(r => r.max_moy365);
+
+
+    document.getElementById('lastDate').textContent =
+        labels[labels.length - 1];
+
+    const lastRow = rows[rows.length - 1];
+
+    document.getElementById('lastTemp').textContent =
+        lastRow.temp.toFixed(3) + ' °C';
+
+    document.getElementById('lastMoy').textContent =
+        lastRow.moy365.toFixed(4) + ' °C';
+
+    if (json.updated_at) {
+        const updated = new Date(json.updated_at);
+
+        document.getElementById('updatedAt').textContent =
+            updated.toLocaleString('fr-FR');
+    }
+
+
+    let allValues;
+
+    if (currentView === 'temp') {
+
+        allValues = [
+            ...temperatures,
+            ...moy90.filter(v => v !== null),
+            ...moy365.filter(v => v !== null),
+            ...maxTemp.filter(v => v !== null),
+            ...maxMoy.filter(v => v !== null)
+        ];
+
+    } else {
+
+        allValues = [
+            ...anomalies.filter(v => v !== null),
+            ...anomaly90.filter(v => v !== null),
+            0
+        ];
+    }
+
+    const margin =
+        currentView === 'temp'
+        ? 0.03
+        : 0.08;
+
+    const minY =
+        Math.floor(
+            (Math.min(...allValues) - margin) * 20
+        ) / 20;
+
+    const maxY =
+        Math.ceil(
+            (Math.max(...allValues) + margin) * 20
+        ) / 20;
+
+
+    const ctx = document.getElementById('sstChart');
+
+    if (sstChart) {
+        sstChart.destroy();
+    }
+
+    sstChart = new Chart(ctx, {
+
+        type: 'line',
+
+        data: {
+
+            labels: labels,
+
+            datasets:
+                currentView === 'temp'
+                ?
+                [
+                    {
+                        label: 'Temp',
+                        data: temperatures,
+                        borderColor: '#19b5e5',
+                        borderWidth: 1,
+                        pointRadius: 0,
+                        tension: 0.15
+                    },
+
+                    {
+                        label: 'Moy90',
+                        data: moy90,
+                        borderColor: '#f28e2b',
+                        borderWidth: 1,
+                        pointRadius: 0,
+                        tension: 0.10
+                    },
+
+                    {
+                        label: 'Moy365',
+                        data: moy365,
+                        borderColor: '#008b8b',
+                        borderWidth: 1,
+                        pointRadius: 0,
+                        tension: 0.10
+                    },
+
+                    {
+                        label: 'Max',
+                        data: maxTemp,
+                        borderColor: '#92d050',
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        stepped: true
+                    },
+
+                    {
+                        label: 'MaxMoy',
+                        data: maxMoy,
+                        borderColor: '#4472c4',
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        stepped: true
+                    }
+                ]
+                :
+                [
+                    {
+                        label: 'Anomalie',
+                        data: anomalies,
+                        borderColor: '#19b5e5',
+                        borderWidth: 1,
+                        pointRadius: 0,
+                        tension: 0.10
+                    },
+
+                    {
+                        label: 'Anomalie Moy90',
+                        data: anomaly90,
+                        borderColor: '#f28e2b',
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        tension: 0.10
+                    },
+
+                    {
+                        label: 'Référence 1991–2020',
+                        data: rows.map(() => 0),
+                        borderColor: '#555555',
+                        borderWidth: 2,
+                        pointRadius: 0
+                    }
+                ]
+        },
+
+
+        options: {
+
+            responsive: true,
+            maintainAspectRatio: false,
+
+            interaction: {
+                intersect: false,
+                mode: 'index'
+            },
+
+            plugins: {
+
+                legend: {
+                    position: 'bottom',
+                    labels: {
+                        usePointStyle: false,
+                        boxWidth: 35,
+                        padding: 20
+                    }
+                },
+
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            return context.dataset.label +
+                                ' : ' +
+                                Number(context.raw).toFixed(3) +
+                                ' °C';
+                        }
+                    }
+                }
+            },
+
+
+            scales: {
+
+                x: {
+
+                    grid: {
+                        display: true,
+                        drawOnChartArea: false,
+                        drawTicks: true,
+                        tickLength: 5,
+
+                        tickColor: function(context) {
+
+                            const index = context.tick.value;
+
+                            if (
+                                index === undefined ||
+                                !rows[index]
+                            ) {
+                                return 'rgba(0,0,0,0)';
+                            }
+
+                            const parts =
+                                rows[index].date.split('-');
+
+                            const month = Number(parts[1]);
+                            const day = Number(parts[2]);
+
+                            // 1 mois : petit repère chaque jour
+                            if (range === '1m') {
+                                return '#888';
+                            }
+
+                            // 1 an : repère au début de chaque mois
+                            if (range === '1y') {
+                                return day === 1
+                                    ? '#888'
+                                    : 'rgba(0,0,0,0)';
+                            }
+
+                            // Vues longues :
+                            // petit repère au 1er janvier de chaque année
+                            if (
+                                range === '3y' ||
+                                range === '10y' ||
+                                range === 'all'
+                            ) {
+                                return (
+                                    month === 1 &&
+                                    day === 1
+                                )
+                                    ? '#888'
+                                    : 'rgba(0,0,0,0)';
+                            }
+
+                            return 'rgba(0,0,0,0)';
+                        }
+                    },
+
+                    ticks: {
+
+                        autoSkip: false,
+                        maxRotation: 0,
+                        minRotation: 0,
+
+                        font: {
+                            size: 10
+                        },
+
+                        callback: function(value, index) {
+
+                            const iso = rows[index].date;
+                            const parts = iso.split('-');
+
+                            const year = Number(parts[0]);
+                            const month = Number(parts[1]);
+                            const day = Number(parts[2]);
+
+                            // Vue 1 mois :
+                            // une petite date tous les 5 points
+                            if (range === '1m') {
+
+                                if (
+                                    index % 5 === 2 ||
+                                    index === rows.length - 1
+                                ) {
+                                    return String(day).padStart(2, '0')
+                                        + '/'
+                                        + String(month).padStart(2, '0');
+                                }
+
+                                return '';
+                            }
+
+                            // Vue 1 an :
+                            // petit tiret au 1er du mois,
+                            // nom du mois vers le milieu.
+                            if (range === '1y') {
+
+                                if (day === 15) {
+                                    const months = [
+                                        'janv.', 'févr.', 'mars',
+                                        'avr.', 'mai', 'juin',
+                                        'juil.', 'août', 'sept.',
+                                        'oct.', 'nov.', 'déc.'
+                                    ];
+
+                                    return months[month - 1];
+                                }
+
+                                return '';
+                            }
+
+                            // 3 ans et 10 ans :
+                            // petit tiret au 1er janvier,
+                            // année affichée au milieu (1er juillet).
+                            if (
+                                range === '3y' ||
+                                range === '10y'
+                            ) {
+                                if (month === 7 && day === 1) {
+                                    return String(year);
+                                }
+
+                                return '';
+                            }
+
+                            // Historique complet :
+                            // petit tiret tous les 1ers janvier,
+                            // libellé seulement tous les 5 ans,
+                            // centré dans l'année (1er juillet).
+                            if (range === 'all') {
+
+                                const lastParts =
+                                    rows[rows.length - 1].date.split('-');
+                                const lastYear =
+                                    Number(lastParts[0]);
+
+                                if (
+                                    month === 7 &&
+                                    day === 1 &&
+                                    (
+                                        year % 5 === 0 ||
+                                        year === lastYear
+                                    )
+                                ) {
+                                    return String(year);
+                                }
+
+                                return '';
+                            }
+
+                            return '';
+                        }
+                    }
+                },
+
+
+                y: {
+
+                    min: minY,
+                    max: maxY,
+
+                    ticks: {
+                        stepSize: 0.05,
+                        callback: function(value) {
+                            return value.toFixed(2);
+                        }
+                    },
+
+                    title: {
+                        display: true,
+                        text: '°C'
+                    },
+
+                    grid: {
+                        color: '#dddddd'
+                    }
+                }
+            }
+        }
+    });
+}
+
+
+loadSST('1y');
+
+</script>
+
+</body>
+</html>
